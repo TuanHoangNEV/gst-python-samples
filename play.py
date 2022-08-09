@@ -1,52 +1,85 @@
-import sys
-
+import sys, os
 import gi
 gi.require_version('Gst', '1.0')
-from gi.repository import GObject, Gst
+from gi.repository import Gst, GObject, Gtk
+from gi.repository import GObject, Gst, GstVideo
+class GTK_Main:
+    def __init__(this):
+        window = Gtk.Window(Gtk.WindowType.TOPLEVEL)
+        window.set_title("RTSP Playe")
+        window.set_default_size(500, 400)
+        window.connect("destroy", Gtk.main_quit, "WM destroy")
+        vbox = Gtk.VBox()
+        window.add(vbox)
+        this.movie_window = Gtk.DrawingArea()
+        vbox.add(this.movie_window)
+        hbox = Gtk.HBox()
+        vbox.pack_start(hbox, False, False, 0)
+        hbox.set_border_width(10)
+        hbox.pack_start(Gtk.Label(), False, False, 0)
+        this.button = Gtk.Button("Start")
+        this.button.connect("clicked", this.start_stop)
+        hbox.pack_start(this.button, False, False, 0)
+        this.button2 = Gtk.Button("Quit")
+        this.button2.connect("clicked", this.exit)
+        hbox.pack_start(this.button2, False, False, 0)
+        this.button3 = Gtk.Button("Record")
+        this.button3.connect("clicked", this.recording)
+        hbox.pack_start(this.button3, False, False, 0)
+        hbox.add(Gtk.Label())
+        window.show_all()
 
-def bus_call(bus, message, loop):
-    t = message.type
-    if t == Gst.MessageType.EOS:
-        sys.stdout.write("End-of-stream\n")
-        loop.quit()
-    elif t == Gst.MessageType.ERROR:
-        err, debug = message.parse_error()
-        sys.stderr.write("Error: %s: %s\n" % (err, debug))
-        loop.quit()
-    return True
+        # Set up the gstreamer pipeline
+        this.player = Gst.parse_launch ("rtspsrc location=rtsp://"+sys.argv[1]+" latency=0 ! rtph264depay ! decodebin ! videoconvert ! autovideosink")
+        cmd  = "rtspsrc location=rtsp://"+sys.argv[1]+" ! rtph264depay ! h264parse ! mp4mux ! filesink location=output.mp4"
+        this.recorder = Gst.parse_launch(cmd)
+        bus = this.player.get_bus()
+        bus.add_signal_watch()
+        bus.enable_sync_message_emission()
+        bus.connect("message", this.on_message)
+        bus.connect("sync-message::element", this.on_sync_message)
 
-def main(args):
-    if len(args) != 2:
-        sys.stderr.write("usage: %s <media file or uri>\n" % args[0])
-        sys.exit(1)
+    def start_stop(this, w):
+        if this.button.get_label() == "Start":
+            this.button.set_label("Stop")
+            this.player.set_state(Gst.State.PLAYING)
+        else:
+            this.player.set_state(Gst.State.NULL)
+            this.button.set_label("Start")
 
-    GObject.threads_init()
-    Gst.init(None)
+    def exit(this, widget, data=None):
+        Gtk.main_quit()
 
-    playbin = Gst.ElementFactory.make("playbin", None)
-    if not playbin:
-        sys.stderr.write("'playbin' gstreamer plugin missing\n")
-        sys.exit(1)
+    def recording(this, w):
+        if this.button3.get_label() == "Record":
+            this.button3.set_label("Stop")
+            this.recorder.set_state(Gst.State.PLAYING)
+        else:
+            this.recorder.set_state(Gst.State.NULL)
+            this.button3.set_label("Record")
 
-    if Gst.uri_is_valid(args[1]):
-      uri = args[1]
-    else:
-      uri = Gst.filename_to_uri(args[1])
-    playbin.set_property('uri', uri)
+    def on_message(this, bus, message):
+        t = message.type
+        if t == Gst.MessageType.EOS:
+            this.player.set_state(Gst.State.NULL)
+            this.button.set_label("Start")
+        elif t == Gst.MessageType.ERROR:
+            err, debug = message.parse_error()
+            print ("Error: %s" % err, debug)
+            this.player.set_state(Gst.State.NULL)
+            this.button.set_label("Start")
 
-    loop = GObject.MainLoop()
+    def on_sync_message(this, bus, message):
+        struct = message.get_structure()
+        if not struct:
+            return
+        message_name = struct.get_name()
+        if message_name == "prepare-window-handle":
+            imagesink = message.src
+            imagesink.set_property("force-aspect-ratio", True)
+            imagesink.set_window_handle(this.movie_window.get_property('window').get_xid())
 
-    bus = playbin.get_bus()
-    bus.add_signal_watch()
-    bus.connect ("message", bus_call, loop)
-    
-    playbin.set_state(Gst.State.PLAYING)
-    try:
-      loop.run()
-    except:
-      pass
-    
-    playbin.set_state(Gst.State.NULL)
-
-if __name__ == '__main__':
-    sys.exit(main(sys.argv))
+Gst.init(None)
+GTK_Main()
+GObject.threads_init()
+Gtk.main()
