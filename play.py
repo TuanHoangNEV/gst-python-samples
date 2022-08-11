@@ -1,12 +1,23 @@
 import sys, os
 import gi
 gi.require_version('Gst', '1.0')
-from gi.repository import Gst, GObject, Gtk
-from gi.repository import GObject, Gst, GstVideo
+from gi.repository import Gst, GObject, Gtk, GstVideo
+
+rtpsUrl = [
+        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mp4",
+        "rtsp://rtsp.stream/pattern",
+        "rtsp://rtsp.stream/pattern",
+        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mp4",
+        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mp4",
+        "rtsp://rtsp.stream/pattern",
+        "rtsp://rtsp.stream/pattern",
+        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mp4",
+    ]
+
 class GTK_Main:
     def __init__(this):
         window = Gtk.Window(Gtk.WindowType.TOPLEVEL)
-        window.set_title("RTSP Playe")
+        window.set_title("RTSP Player")
         window.set_default_size(500, 400)
         window.connect("destroy", Gtk.main_quit, "WM destroy")
         vbox = Gtk.VBox()
@@ -30,9 +41,19 @@ class GTK_Main:
         window.show_all()
 
         # Set up the gstreamer pipeline
-        this.player = Gst.parse_launch ("rtspsrc location=rtsp://"+sys.argv[1]+" latency=0 ! rtph264depay ! decodebin ! videoconvert ! autovideosink")
-        cmd  = "rtspsrc location=rtsp://"+sys.argv[1]+" ! rtph264depay ! h264parse ! mp4mux ! filesink location=output.mp4"
-        this.recorder = Gst.parse_launch(cmd)
+        this.recordPipelines = []
+        streamCmd = 'compositor name=comp'
+        for index, val in enumerate(rtpsUrl):
+            streamCmd += ' sink_'+ str(index) + '::xpos=' + str(320*index) + ' sink_'+ str(index) + '::ypos=0 sink_'+ str(index) + '::width=320 sink_'+ str(index) + '::height=240'
+            recordCmd = Gst.parse_launch ('rtspsrc location="' + val + '" ! application/x-rtp, media=video, encoding-name=H264  ! queue ! rtph264depay ! h264parse ! matroskamux ! filesink location=output' + str(index) + '.mkv')
+            #this.recordPipelines.append(recordCmd)
+            recordCmd.set_state(Gst.State.PLAYING)
+
+        streamCmd += ' ! decodebin ! videoconvert ! autovideosink'
+        for index, val in enumerate(rtpsUrl):
+            streamCmd += ' rtspsrc location="' + val + '" ! rtph264depay ! avdec_h264 ! queue2 ! comp.sink_' + str(index)
+
+        this.player = Gst.parse_launch (streamCmd)
         bus = this.player.get_bus()
         bus.add_signal_watch()
         bus.enable_sync_message_emission()
@@ -53,10 +74,12 @@ class GTK_Main:
     def recording(this, w):
         if this.button3.get_label() == "Record":
             this.button3.set_label("Stop")
-            this.recorder.set_state(Gst.State.PLAYING)
+            #for x in this.recordPipelines:
+                #x.set_state(Gst.State.PLAYING)
         else:
-            this.recorder.set_state(Gst.State.NULL)
             this.button3.set_label("Record")
+            #for x in this.recordPipelines:
+                #x.set_state(Gst.State.NULL)
 
     def on_message(this, bus, message):
         t = message.type
